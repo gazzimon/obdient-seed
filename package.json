@@ -1,0 +1,20 @@
+{
+  "name": "obdient-seed",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OBDient central hub — harvest seed peer (P2P, phase C), senior proxy slot (phase D), curation pipeline (ADR-0002, later). Build-time infrastructure: never a runtime dependency of the app.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "seed": "node src/seed/index.mjs",
+    "harvest": "node src/ingest/harvest.mjs",
+    "test": "node test/replication.test.mjs"
+  },
+  "dependencies": {
+    "b4a": "^1.8.1",
+    "hypercore": "^11.33.2",
+    "hyperswarm": "^4.17.0"
+  }
+}
