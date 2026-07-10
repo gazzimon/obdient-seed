@@ -30,12 +30,21 @@ export function writeKeyPreamble(socket, publicKey) {
   socket.write(publicKey);
 }
 
+/** Grace period for the preamble — a peer that connects and sends nothing
+ *  must not hold the socket (and its listeners) open forever. */
+export const PREAMBLE_TIMEOUT_MS = 30_000;
+
 /** Seed side: read exactly 32 bytes off the socket, unshift any remainder so
  *  the replication protocol sees an untouched stream. Resolves with the key. */
-export function readKeyPreamble(socket) {
+export function readKeyPreamble(socket, { timeout = PREAMBLE_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let total = 0;
+
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`no key preamble within ${timeout}ms`));
+    }, timeout);
 
     const onError = (err) => {
       cleanup();
@@ -65,6 +74,7 @@ export function readKeyPreamble(socket) {
     };
 
     function cleanup() {
+      clearTimeout(timer);
       socket.off('data', onData);
       socket.off('error', onError);
       socket.off('close', onClose);

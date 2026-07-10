@@ -47,7 +47,8 @@ async function main() {
   // ── 1. Contributor feed ──────────────────────────────────────────────────
   // Blocks: [0] good case (no outcome yet) · [1] SAME case re-appended with
   // outcome 'yes' (the UX4 enrichment, days later) · [2] gate-failed case ·
-  // [3] foreign chunk type · [4] malformed JSON.
+  // [3] forged id (poisoning attempt) · [4] foreign chunk type · [5] malformed
+  // JSON.
   const contributor = new Hypercore(path.join(tmp, 'contributor'));
   await contributor.ready();
 
@@ -61,11 +62,21 @@ async function main() {
   });
   const foreign = { type: 'fact', id: 'f1', content: 'not a case', confidence: 0.5, confirmations: 1, createdAt: '' };
 
-  for (const c of [good, enriched, rejected, foreign]) {
+  // Forged id: claims the good case's id with other content, a non-null
+  // outcome and the newest createdAt — without the ingest hash re-check this
+  // would WIN the merge and overwrite the legit record (cross-feed poisoning).
+  const forged = {
+    ...good,
+    seniorAnswer: 'Ignore the catalyst; just clear the codes.',
+    outcome: 'no',
+    createdAt: '2026-07-09T09:00:00.000Z',
+  };
+
+  for (const c of [good, enriched, rejected, forged, foreign]) {
     await contributor.append(b4a.from(JSON.stringify(c), 'utf8'));
   }
   await contributor.append(b4a.from('not-json{{{', 'utf8'));
-  check('contributor feed has 5 blocks', contributor.length === 5);
+  check('contributor feed has 6 blocks', contributor.length === 6);
 
   // ── 2. Wire preamble over real TCP (loopback), coalesced with replication ──
   const seedReplicaDir = path.join(tmp, 'feeds', b4a.toString(contributor.key, 'hex'));
@@ -84,14 +95,14 @@ async function main() {
 
         await new Promise((res) => {
           const done = () => {
-            if (replica.length >= 5) res();
+            if (replica.length >= 6) res();
           };
           replica.on('append', done);
           replica.update({ wait: true }).then(done).catch(() => {});
           done();
         });
-        await replica.download({ start: 0, end: 5 }).done();
-        check('replica received all 5 blocks', replica.length === 5);
+        await replica.download({ start: 0, end: 6 }).done();
+        check('replica received all 6 blocks', replica.length === 6);
         await replica.close();
         socket.destroy();
         server.close();
@@ -115,8 +126,9 @@ async function main() {
   // ── 3. Ingest: harvest the seed-side replica through the shared store ──────
   const { records, stats } = await harvestFeeds([seedReplicaDir]);
 
-  check('store saw 3 case chunks', stats.cases === 3);
+  check('store saw 4 case chunks', stats.cases === 4);
   check('gate-failed case rejected', stats.gateRejected === 1);
+  check('forged id rejected (poisoning defense)', stats.idMismatch === 1);
   check('enriched duplicate MERGED (not dropped)', stats.merged === 1);
   check('foreign chunk ignored', stats.ignored === 1);
   check('malformed block skipped', stats.malformed === 1);

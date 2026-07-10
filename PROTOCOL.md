@@ -20,6 +20,10 @@ version (`OBDIENT-HARVEST/2`) and/or the `CaseChunk.v` schema version.
 - The contributor writes the preamble, then replicates as **initiator**; the
   seed reads exactly 32 bytes (pushing any over-read remainder back with
   `unshift()` — pause the stream first), then replicates as non-initiator.
+- **Abuse limits (seed side; the topic is public):** the preamble must arrive
+  within 30 s; at most 512 contributor feeds are stored; a feed stops
+  replicating at 10 000 blocks; blocks over 256 KiB are skipped at ingest.
+  All generous vs. real devices — bumped deliberately if ever hit.
 - Topic separation is deliberate (data minimization): cases flow **up** only to
   the seed; curated knowledge flows **down** via the signed bundle (ADR-0002).
   Peers never replicate each other's cases.
@@ -56,13 +60,20 @@ on ingest (defense in depth).
 The store (`src/ingest/store.mjs`) applies the same policy regardless of how a
 case arrives (P2P replication today, HTTP proxy capture in phase D):
 
-1. **Shape check:** `type === 'case'`, string `id`, `v` missing or `1`.
-2. **Gate re-check:** `gate.passed === true` or the case is rejected.
-3. **Dedup + MERGE by `id`:** `outcome` is NOT part of the content hash, so an
+1. **Shape check:** `type === 'case'`, string `id`, object `brief`, string
+   `seniorAnswer`, `v` missing or `1`.
+2. **Id re-check:** `id` must equal `sha256(JSON.stringify(brief) + seniorAnswer)`
+   recomputed from the parsed chunk, or the case is rejected. Dedup is global
+   across feeds, so an unverified id would let one contributor claim (and
+   overwrite on merge) another's case. Device-side consequence: `briefJson`
+   MUST be the compact `JSON.stringify` serialization, so the hash survives a
+   parse/stringify round-trip.
+3. **Gate re-check:** `gate.passed === true` or the case is rejected.
+4. **Dedup + MERGE by `id`:** `outcome` is NOT part of the content hash, so an
    enriched re-append (outcome captured days later, offline) keeps the same id.
    Merge policy: a record with non-null `outcome` **wins** over null; if both
    have (or both lack) an outcome, the newer `createdAt` wins.
-4. **Export:** `corrections.jsonl` (ADR-0002 Phase 1 — distillation input):
+5. **Export:** `corrections.jsonl` (ADR-0002 Phase 1 — distillation input):
 
 ```jsonl
 { "case_id": "…", "brief": {…}, "senior_answer": "…",

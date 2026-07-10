@@ -5,9 +5,12 @@
 //   - phase D: the senior proxy calls addCase() inline at capture time
 //
 // Policy, in order:
-//   1. shape check    — type 'case', string id, schema v missing or 1
-//   2. gate re-check  — gate.passed === true or rejected (defense in depth)
-//   3. dedup + MERGE  — outcome is NOT part of the content hash, so an
+//   1. shape check    — type 'case', string id, object brief, string
+//      seniorAnswer, schema v missing or 1
+//   2. id re-check    — id must equal the recomputed content hash, or a chunk
+//      could claim another case's id and overwrite it on merge (poisoning)
+//   3. gate re-check  — gate.passed === true or rejected (defense in depth)
+//   4. dedup + MERGE  — outcome is NOT part of the content hash, so an
 //      enriched re-append (outcome captured days later, offline) keeps the
 //      same id. Non-null outcome wins over null; ties → newest createdAt.
 
@@ -27,7 +30,7 @@ function betterOf(a, b) {
 
 export function createCaseStore() {
   const byId = new Map();
-  const stats = { cases: 0, gateRejected: 0, merged: 0, ignored: 0 };
+  const stats = { cases: 0, gateRejected: 0, idMismatch: 0, merged: 0, ignored: 0 };
 
   return {
     stats,
@@ -38,12 +41,22 @@ export function createCaseStore() {
         chunk == null ||
         chunk.type !== 'case' ||
         typeof chunk.id !== 'string' ||
-        (chunk.v != null && chunk.v !== 1)
+        (chunk.v != null && chunk.v !== 1) ||
+        chunk.brief == null ||
+        typeof chunk.brief !== 'object' ||
+        typeof chunk.seniorAnswer !== 'string'
       ) {
         stats.ignored++;
         return false;
       }
       stats.cases++;
+
+      // Dedup is global across feeds, so an unverified id would let one
+      // contributor claim (and overwrite on merge) another's case.
+      if (chunk.id !== caseId(JSON.stringify(chunk.brief), chunk.seniorAnswer)) {
+        stats.idMismatch++;
+        return false;
+      }
 
       if (chunk.gate?.passed !== true) {
         stats.gateRejected++;

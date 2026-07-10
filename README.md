@@ -8,7 +8,7 @@ devices lose nothing: they keep appending cases to their local feeds
 | Phase | Component | Status |
 |-------|-----------|--------|
 | C | **Harvest seed peer** (`src/seed/`) — P2P collection of validated case pairs | ✅ working |
-| C | **Ingest store** (`src/ingest/`) — gate re-check, dedup+merge, `corrections.jsonl` export | ✅ working |
+| C | **Ingest store** (`src/ingest/`) — id + gate re-check, dedup+merge, `corrections.jsonl` export | ✅ working |
 | D | **Senior proxy** (`src/proxy/`) — gateway in front of Claude; same store, second transport | 🔲 phase 2 |
 | — | Curation/publisher pipeline (ADR-0002: signed RAG bundle + batch distillation) | 🔲 later |
 

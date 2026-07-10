@@ -33,6 +33,13 @@ const DATA_DIR = parseDataDir();
 const FEEDS_DIR = path.join(DATA_DIR, 'feeds');
 const KEYS_FILE = path.join(DATA_DIR, 'keys.json');
 
+// Abuse caps — the harvest topic is announced on a PUBLIC DHT, so every
+// resource a stranger can grow must be bounded: feeds on disk, blocks per
+// feed (plus the preamble timeout in wire.mjs). Generous vs. real devices,
+// which append a handful of cases per day; bump deliberately if ever hit.
+const MAX_FEEDS = 512;
+const MAX_FEED_BLOCKS = 10_000;
+
 // keys.json — registry of every contributor feed ever seen, so harvest.mjs
 // can reopen them offline and re-replication resumes across restarts.
 function loadKeys() {
@@ -45,7 +52,11 @@ function loadKeys() {
 
 function saveKeys(keys) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
+  // Write-then-rename: a crash mid-write must not corrupt the registry
+  // (loadKeys would silently return {} and the seed would forget every feed).
+  const tmp = KEYS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(keys, null, 2));
+  fs.renameSync(tmp, KEYS_FILE);
 }
 
 const keys = loadKeys();
@@ -56,6 +67,17 @@ function openCore(keyHex) {
   if (!core) {
     // Passing the key makes this a read-only replica of the contributor feed.
     core = new Hypercore(path.join(FEEDS_DIR, keyHex), b4a.from(keyHex, 'hex'));
+    // Replication is sparse by default — without a live download range the
+    // seed only learns the feed LENGTH; block DATA is never fetched and
+    // harvest.mjs finds nothing. end: -1 keeps fetching as the feed grows.
+    core.download({ start: 0, end: -1 });
+    // Growth log lives here (once per core), NOT per connection — reconnects
+    // from the same contributor must not pile listeners onto the core.
+    core.on('append', () => {
+      console.log(
+        `[seed] feed ${keyHex.slice(0, 16)}… grew to ${core.length} blocks`,
+      );
+    });
     cores.set(keyHex, core);
   }
   return core;
@@ -77,12 +99,19 @@ async function main() {
     const peer = socket.remotePublicKey
       ? b4a.toString(socket.remotePublicKey, 'hex').slice(0, 8)
       : 'unknown';
-    console.log(`[seed] peer connected: ${peer}…`);
+    console.log(`[seed] peer connected: ${peer}… (${swarm.connections.size} open)`);
 
     readKeyPreamble(socket)
       .then(async (key) => {
         const keyHex = b4a.toString(key, 'hex');
         if (!keys[keyHex]) {
+          if (Object.keys(keys).length >= MAX_FEEDS) {
+            console.warn(
+              `[seed] feed cap (${MAX_FEEDS}) reached — refusing new contributor ${keyHex.slice(0, 16)}…`,
+            );
+            socket.destroy();
+            return;
+          }
           keys[keyHex] = { firstSeen: new Date().toISOString() };
           saveKeys(keys);
           console.log(`[seed] NEW contributor feed: ${keyHex.slice(0, 16)}…`);
@@ -90,15 +119,30 @@ async function main() {
         const core = openCore(keyHex);
         await core.ready();
 
+        if (core.length >= MAX_FEED_BLOCKS) {
+          console.warn(
+            `[seed] feed ${keyHex.slice(0, 16)}… is at the ${MAX_FEED_BLOCKS}-block cap — refusing replication`,
+          );
+          socket.destroy();
+          return;
+        }
+
+        // Per-connection cap guard; removed on close so it doesn't accumulate.
+        const onAppend = () => {
+          if (core.length >= MAX_FEED_BLOCKS) {
+            console.warn(
+              `[seed] feed ${keyHex.slice(0, 16)}… hit the ${MAX_FEED_BLOCKS}-block cap — dropping connection`,
+            );
+            socket.destroy();
+          }
+        };
+        core.on('append', onAppend);
+        socket.on('close', () => core.off('append', onAppend));
+
         // Non-initiator replication over the remaining stream.
         core.replicate(socket);
 
         const before = core.length;
-        core.on('append', () => {
-          console.log(
-            `[seed] feed ${keyHex.slice(0, 16)}… grew to ${core.length} blocks`,
-          );
-        });
         await core.update({ wait: true }).catch(() => {});
         if (core.length > before) {
           console.log(
@@ -112,7 +156,9 @@ async function main() {
       });
 
     socket.on('error', () => {}); // peer went away — normal churn
-    socket.on('close', () => console.log(`[seed] peer closed: ${peer}…`));
+    socket.on('close', () =>
+      console.log(`[seed] peer closed: ${peer}… (${swarm.connections.size} open)`),
+    );
   });
 
   const discovery = swarm.join(harvestTopic(), { server: true, client: false });

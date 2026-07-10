@@ -17,6 +17,10 @@ import { createCaseStore, toJsonl } from './store.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..', '..');
 
+/** A CaseChunk is a few KB of redacted brief + answer; anything bigger is
+ *  garbage or abuse — skip it before handing it to JSON.parse. */
+const MAX_BLOCK_BYTES = 256 * 1024;
+
 function argValue(flag, fallback) {
   const idx = process.argv.indexOf(flag);
   return idx >= 0 && process.argv[idx + 1] ? path.resolve(process.argv[idx + 1]) : fallback;
@@ -25,9 +29,15 @@ function argValue(flag, fallback) {
 /** Read the given feed dirs through the shared store. Exported for the test. */
 export async function harvestFeeds(feedDirs) {
   const store = createCaseStore();
-  const feedStats = { blocks: 0, malformed: 0 };
+  const feedStats = { blocks: 0, malformed: 0, oversize: 0 };
 
   for (const dir of feedDirs) {
+    // Opening a missing dir would CREATE a fresh writable core there — skip
+    // registry entries whose storage was deleted instead of polluting data/.
+    if (!fs.existsSync(dir)) {
+      console.warn(`[harvest] feed dir missing, skipped: ${dir}`);
+      continue;
+    }
     const core = new Hypercore(dir);
     await core.ready();
 
@@ -37,6 +47,10 @@ export async function harvestFeeds(feedDirs) {
       try {
         const buf = await core.get(i, { wait: false });
         if (!buf) continue; // block not locally available (sparse replica)
+        if (buf.length > MAX_BLOCK_BYTES) {
+          feedStats.oversize++;
+          continue;
+        }
         chunk = JSON.parse(b4a.toString(buf, 'utf8'));
       } catch {
         feedStats.malformed++;
@@ -69,7 +83,7 @@ async function main() {
   fs.writeFileSync(outFile, toJsonl(records));
 
   console.log(`[harvest] feeds: ${feedDirs.length} · blocks: ${stats.blocks} · case chunks: ${stats.cases}`);
-  console.log(`[harvest] gate-rejected: ${stats.gateRejected} · merged: ${stats.merged} · malformed: ${stats.malformed} · ignored: ${stats.ignored}`);
+  console.log(`[harvest] gate-rejected: ${stats.gateRejected} · id-mismatch: ${stats.idMismatch} · merged: ${stats.merged} · malformed: ${stats.malformed} · oversize: ${stats.oversize} · ignored: ${stats.ignored}`);
   console.log(`[harvest] → ${records.length} records written to ${outFile}`);
 }
 
