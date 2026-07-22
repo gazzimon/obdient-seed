@@ -49,4 +49,7 @@ user identity, raw conversations. Contribution is opt-in on-device; the hub
 - `src/ingest/harvest.mjs` — CLI: feeds → store → `out/corrections.jsonl`
 - `src/proxy/` — phase D slot (see its README)
 - `test/replication.test.mjs` — self-test incl. outcome-merge policy
+- `test/conformance.test.mjs` — cross-repo contract test: reproduces the device
+  worklet's exact `CaseChunk` construction and proves the content id survives the
+  JSON round-trip through the store (the pipeline's silent-failure point)
 - `test/sim-client.mjs` — device simulator; reference for the app's Bare worklet

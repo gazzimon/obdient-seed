@@ -2,3 +2,6 @@ node_modules/
 data/
 out/
 sim-device/
+.env
+.env.*
+!.env.example

@@ -1,19 +1,67 @@
-# src/proxy — senior proxy (phase D, not yet implemented)
+# src/proxy — senior proxy (phase D)
 
-Decision (PLAN-002 v2 §5, 2026-07-10): build **after** the P2P track (C) works
-end-to-end. Only makes sense with a subsidized/B2B product model — BYOK already
-solved API-key security on-device (OBDient audit C1).
+Gateway in front of the senior model. The OBDient app's cloud assistant
+("Assistente Sr") calls this instead of holding a provider key on-device — it
+**replaces the BYOK path** (`claude-api.datasource.ts`) for the Beta V2 launch.
 
-## Design constraints (already fixed)
+> **Provider note:** originally specified in front of the Claude API. As of the
+> Beta V2 plan the senior model is **NVIDIA Nemotron** (`senior.mjs`). The
+> provider/model is server-side only and **must never reach the client** — the
+> app UI knows exactly one name, "Assistente Sr".
+
+## Run
+
+```bash
+export NVIDIA_API_KEY=...      # senior credential — NEVER commit it
+npm run proxy                  # listens on :8787 (PORT overridable)
+```
+
+Health check: `GET /health` → `{ "ok": true }`.
+
+## API
+
+`POST /v1/senior`
+
+```jsonc
+// request  — already redacted upstream (no VIN/plate/BT/identity)
+{
+  "messages": [ { "role": "user", "content": "<brief + turns>" }, ... ],
+  "language": "pt" | "es" | "en"        // optional hint; senior mirrors it anyway
+}
+// response
+{ "answer": "…" }                        // reasoning_content stripped
+```
+
+Errors are generic to the client (`400` bad payload, `429` rate limited,
+`502`/`504` senior unavailable); provider detail stays in server logs.
+
+## Env
+
+| Var | Default | Notes |
+|-----|---------|-------|
+| `NVIDIA_API_KEY` | — (**required**) | senior credential; refuses to start without it |
+| `PORT` | `8787` | HTTP port |
+| `ALLOWED_ORIGIN` | `*` | CORS origin for the app |
+| `RATE_PER_MIN` | `20` | requests per IP per minute |
+
+## Design constraints (fixed — PLAN-002 v2 §5)
 
 - The proxy is a **second transport into the same ingest store**
   (`../ingest/store.mjs`) — it must NOT grow its own case storage or export.
-- Flow: device sends the redacted brief → proxy forwards to the Claude API
-  (server-side key) → returns the senior answer → calls `store.addCase()`
-  inline with `outcome: null`.
-- The enriched outcome (UX4, captured days later, offline) arrives via the P2P
-  seed path and **merges by content-addressed id** — see PROTOCOL.md §Ingest.
+- Flow: device sends the redacted brief → proxy forwards to the senior model
+  (server-side key) → returns the senior answer.
+- Never receives: VIN, Bluetooth address, user identity (same contract as the
+  BYOK path it replaces).
 - Offline-first is not violated: the senior call already requires network by
   definition; the local diagnostic path never touches this proxy.
-- Never receives: VIN, Bluetooth address, user identity (same contract as the
-  direct BYOK path in `claude-api.datasource.ts`).
+
+## Not yet wired (phase D.2)
+
+- **Inline `store.addCase()`.** The store rejects any case with
+  `gate.passed !== true`, and the deterministic gate lives on-device
+  (`diagnostic-gate.ts`). To store proxy-generated cases as a second transport we
+  must **port the gate to Node** first. Until then the launch relies on the
+  existing on-device P2P harvest (opt-in `contributeCases`) to capture cases — the
+  proxy is a **pure forwarder**.
+- **Streaming.** v1 awaits the full reply. If the app renders tokens
+  incrementally later, stream `content` only and keep discarding `reasoning_content`.

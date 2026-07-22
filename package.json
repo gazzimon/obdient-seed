@@ -10,7 +10,8 @@
   "scripts": {
     "seed": "node src/seed/index.mjs",
     "harvest": "node src/ingest/harvest.mjs",
-    "test": "node test/replication.test.mjs"
+    "proxy": "node src/proxy/index.mjs",
+    "test": "node test/replication.test.mjs && node test/conformance.test.mjs"
   },
   "dependencies": {
     "b4a": "^1.8.1",
