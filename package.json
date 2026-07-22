@@ -8,6 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "start": "node src/serve.mjs",
     "seed": "node src/seed/index.mjs",
     "harvest": "node src/ingest/harvest.mjs",
     "proxy": "node src/proxy/index.mjs",
