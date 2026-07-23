@@ -1,0 +1,18 @@
+# Caddy reverse proxy — terminates HTTPS in front of the senior proxy (:8787).
+#
+# Why the sslip.io hostname: Let's Encrypt cannot issue a publicly-trusted cert
+# for a bare IP, and the OBDient app (Android/iOS) rejects cleartext HTTP and
+# self-signed certs. "136.113.190.191.sslip.io" is wildcard DNS that resolves to
+# the VM's IP, so Caddy can complete the ACME HTTP-01 challenge and get a real
+# cert automatically. The app then talks to https://136.113.190.191.sslip.io.
+#
+# Requirements on the VM:
+#   - ports 80 AND 443 open to the internet (80 is needed for the ACME challenge)
+#   - the senior proxy running on localhost:8787 (npm start / the systemd unit)
+#
+# Run:  caddy run --config ./Caddyfile      (foreground)
+#   or install as a service:  caddy start --config ./Caddyfile
+
+136.113.190.191.sslip.io {
+	reverse_proxy localhost:8787
+}

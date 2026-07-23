@@ -18,6 +18,21 @@ npm run proxy                  # listens on :8787 (PORT overridable)
 
 Health check: `GET /health` → `{ "ok": true }`.
 
+### HTTPS (required for the mobile app)
+
+Android/iOS reject cleartext HTTP, so the app must reach the proxy over HTTPS.
+Put **Caddy** in front (repo-root `Caddyfile`): it terminates TLS on :443 and
+reverse-proxies to `localhost:8787`. A bare IP can't get a public cert, so the
+`Caddyfile` uses an **sslip.io** hostname that resolves to the VM IP, letting
+Caddy auto-provision a Let's Encrypt cert.
+
+```bash
+# VM: open ports 80 + 443, keep the proxy on :8787, then:
+caddy run --config ./Caddyfile
+```
+
+The app sets `EXPO_PUBLIC_SENIOR_PROXY_URL=https://<ip>.sslip.io`.
+
 ## API
 
 `POST /v1/senior`
